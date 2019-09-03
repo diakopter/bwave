@@ -235,7 +235,7 @@ function VProcess(_vfs, _vdisplay) {
     function bwave_mono_glyph() {
         return vdisplay.mono_glyph();
     }
-
+    
     const wasm_imports = {
         bwave: {
             arg_len:  bwave_arg_len,

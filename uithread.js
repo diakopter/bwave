@@ -80,9 +80,11 @@ var modifierKeys = { Control:1, Shift:1, Alt:1, Meta:1 };
 return function BWaveUI(div_id) {
     var textarea_id = div_id + '_textarea';
     var canvas_id = div_id + '_canvas';
-    var canvas_height = 600;
-    var canvas_width = 800;
+    var canvas_width = window.innerWidth;
+    var canvas_height = window.innerHeight;
     var glyph_height = 20;
+    var mainCanvas = document.createElement("canvas");
+    var glyphCanvas = document.createElement('canvas');
     
     var dpr = 1;//getPixelRatio().devicePixelRatio;
     if (dpr != 1) {
@@ -90,6 +92,12 @@ return function BWaveUI(div_id) {
         canvas_width *= dpr;
         glyph_height *= dpr;
     }
+    function resizeCanvas() {
+        mainCanvas.width = window.innerWidth;
+        mainCanvas.height = window.innerHeight;
+    }
+    //window.addEventListener('resize', resizeCanvas, false);
+    //resizeCanvas();
     
     const glyph_width = glyph_height / 2;
     const glyph_char_height = glyph_height+'px';
@@ -108,14 +116,20 @@ return function BWaveUI(div_id) {
         font-family: "UbuntuMono";
         src: url("fonts/UbuntuMono-Bold.ttf") format("opentype");
         font-weight: bold;
+    }
+    html, body, div, canvas {
+      width: 100%;
+      height: 100%;
+      margin: 0px;
+      border: 0;
+      overflow: hidden;
+      display: block;
     }`;
     mainStyle.appendChild(document.createTextNode(mainCss));
     maindiv.appendChild(mainStyle);
-    var mainCanvas = document.createElement("canvas");
     mainCanvas.width = canvas_width;
     mainCanvas.height = canvas_height;
     maindiv.appendChild(mainCanvas);
-    var glyphCanvas = document.createElement('canvas');
     glyphCanvas.width = glyph_width;
     glyphCanvas.height = glyph_height;
     var glyphCanvas_context = glyphCanvas.getContext('2d');
@@ -166,7 +180,6 @@ return function BWaveUI(div_id) {
             mainCanvas_context.putImageData(new ImageData(
                 new Uint8ClampedArray(new_screen),
                     canvas_width, canvas_height), 0, 0);
-            draw_chars("Hello World.", 0, 0);
         }
     }
     
@@ -193,7 +206,7 @@ return function BWaveUI(div_id) {
          || y_pixels > mainCanvas.height - glyph_height) {
             return;
             throw `Glyph draw coordinates out of range: {x_pixels}, {y_pixels}`;
-         }
+        }
         
         const fontSpec = glyph_char_height+' '+default_font;
         fontColor = fontColor || default_foreground;
