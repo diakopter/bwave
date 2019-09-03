@@ -761,13 +761,13 @@ def cmd_append(c: byte) {
         return;
     cmd_buf[cmd_len++] = c;
     cmd_insp = cmd_len;
+    vterm.write(cur_x, cur_y, c);
     if (++cur_x == vterm.cols) {
         cur_x = 0;
         cur_y++;
         if (cur_y == vterm.rows)
             return;
     }
-    vterm.write(cur_x, cur_y, c);
 }
 
 def get_events(argc: int) -> Array<string> {
