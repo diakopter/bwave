@@ -355,10 +355,8 @@ global.vprocess_init = function(vfs, vdisplay) {
 
 (function(global) {
 
-function VDisplay() {
+function VDisplay(width, height, dpr) {
     
-    var height = 600;
-    var width = 800;
     var need_init = true;
     //var context = canvas.getContext('2d');
     
@@ -389,8 +387,8 @@ function VDisplay() {
     };
 }
 
-global.vdisplay_bind = function() {
-    return new VDisplay();
+global.vdisplay_bind = function(width, height, dpr) {
+    return new VDisplay(width, height, dpr);
 };
 
 })(self);
@@ -676,8 +674,7 @@ function ascii2ab(str) {
 }
 
 onmessage = function handle_first_message(evt) {
-    var vdisplay = vdisplay_bind(evt.data[0]);
-    var cb = evt.data[1];
+    var vdisplay = vdisplay_bind(evt.data[0], evt.data[1], evt.data[2]);
     var vfs = vfs_mem_make();
     var vprocess_toplevel = vprocess_init(vfs, vdisplay);
     
@@ -687,7 +684,9 @@ onmessage = function handle_first_message(evt) {
     onmessage = vprocess_toplevel.get_message_handler();
     setTimeout(function() {
         vprocess_toplevel.invoke("Aeneas -compile -target=wasm -heap-size=500m foo.v3 System.v3 RiRuntime.v3 bwave.v3 VTerm.v3");
-        vprocess_toplevel.invoke("foo", cb);
+        vprocess_toplevel.invoke("foo", function() {
+            console.log("root process completed startup.");
+        });
     }, 0);
 }
 
