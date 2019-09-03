@@ -82,7 +82,7 @@ return function BWaveUI(div_id) {
     var canvas_id = div_id + '_canvas';
     var canvas_width = window.innerWidth;
     var canvas_height = window.innerHeight;
-    var glyph_height = 20;
+    var glyph_height = 30;
     var mainCanvas = document.createElement("canvas");
     var glyphCanvas = document.createElement('canvas');
     
@@ -287,6 +287,9 @@ return function BWaveUI(div_id) {
             return;
         case 4: // resize canvas
             throw "not yet implemented: bwaveui_resize";
+        case 5: // mono_glyph
+            draw_chars(String.fromCodePoint(evt.data[3]), evt.data[1], evt.data[2]);
+            return;
         default:
             throw "invalid message code: "+code;
         }

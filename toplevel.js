@@ -228,12 +228,11 @@ function VProcess(_vfs, _vdisplay) {
         return vdisplay.width();
     }
     const RGBA_bytes = 4;
-	//var wait = ms => new Promise((r, j)=>setTimeout(r, ms));
     function bwave_display_draw(ptr) {
         var result = vdisplay.draw(mem_ref(ptr, RGBA_bytes * vdisplay.height() * vdisplay.width()));
     }
-    function bwave_mono_glyph() {
-        return vdisplay.mono_glyph();
+    function bwave_mono_glyph(x, y, ascii) {
+        return vdisplay.mono_glyph(x, y, ascii);
     }
     
     const wasm_imports = {
@@ -382,8 +381,8 @@ function VDisplay(width, height, dpr) {
         global.postMessage([1, clone]);
     };
     
-    this.mono_glyph = function() {
-        throw "Not yet implemented: vdisplay.mono_glyph"
+    this.mono_glyph = function(x, y, ascii) {
+        global.postMessage([5, x, y, ascii]);
     };
 }
 
@@ -645,7 +644,7 @@ import component bwave {
     
     def display_draw(buf: Pointer);
     
-    def mono_glyph(rgba_foreground: int, rgba_background: int, unicode: int, buf: Pointer);
+    def mono_glyph(x: int, y: int, unicode: int);
 }
 `;
 
@@ -679,20 +678,32 @@ onmessage = function handle_first_message(evt) {
     var vprocess_toplevel = vprocess_init(vfs, vdisplay);
     
     vfs._vfs()["VTerm.v3"] = ascii2ab(vtermv3);
-    vfs._vfs()["foo.v3"] = ascii2ab(foov3);
+    vfs._vfs()["CommandShell.v3"] = ascii2ab(CommandShellv3);
     
     onmessage = vprocess_toplevel.get_message_handler();
     setTimeout(function() {
-        vprocess_toplevel.invoke("Aeneas -compile -target=wasm -heap-size=500m foo.v3 System.v3 RiRuntime.v3 bwave.v3 VTerm.v3");
-        vprocess_toplevel.invoke("foo", function() {
+        vprocess_toplevel.invoke("Aeneas -compile -target=wasm -heap-size=50m CommandShell.v3 System.v3 RiRuntime.v3 bwave.v3 VTerm.v3");
+        vprocess_toplevel.invoke("CommandShell", function() {
             console.log("root process completed startup.");
         });
     }, 0);
 }
 
 const vtermv3 = `
-class VTerm(height: int, width: int) {
+class VTerm(width: int, height: int) {
+    private def char_width = 15;
+    private def char_height = 30;
     private var backing = Array<byte>.new(4 * height * width);
+    
+    var cols = width / char_width;
+    var rows = height / char_height;
+    var fgcolor = "gray";
+    var bgcolor = "black";
+    
+    def write(col: int, row: int, ascii: byte) {
+        bwave.mono_glyph(char_width*col, char_height*row, ascii);
+    }
+    
     def draw() {
         bwave.display_draw(Pointer.atContents(backing));
     }
@@ -709,11 +720,9 @@ class VTerm(height: int, width: int) {
 }
 
 `;
-const foov3 =
+const CommandShellv3 =
 `
-
-def main(args: Array<string>) -> int {
-    var vterm = VTerm.new(bwave.display_height(), bwave.display_width());
+/*
 	System.puts("Hello world!\\n");
     var step = 50;
     for (i=0;i < 256;i=i+step)
@@ -722,7 +731,43 @@ def main(args: Array<string>) -> int {
     vterm.fill(byte.!(i), byte.!(j), byte.!(k), byte.!(255));
     vterm.draw();
     }
+*/
+def cmd_max_len = 100;
+var cur_x: int = 0;
+var cur_y: int = 0;
+def cmd_buf = Array<byte>.new(cmd_max_len);
+var cmd_insp = 0; // insertion point
+var cmd_len = 0;
+var prompt = "virgil/bwave: ";
+var vterm: VTerm;
+
+def main(args: Array<string>) -> int {
+    vterm = VTerm.new(bwave.display_width(), bwave.display_height());
+    for (row < vterm.rows)
+        for (col < vterm.cols)
+            vterm.write(col, row, ' ');
+    
+    var i = 0;
+    for (c in prompt) {
+        vterm.write(i++, 0, c);
+    }
+    cur_x += prompt.length;
+    
     return 0;
+}
+
+def cmd_append(c: byte) {
+    if (cmd_len == cmd_max_len)
+        return;
+    cmd_buf[cmd_len++] = c;
+    cmd_insp = cmd_len;
+    if (++cur_x == vterm.cols) {
+        cur_x = 0;
+        cur_y++;
+        if (cur_y == vterm.rows)
+            return;
+    }
+    vterm.write(cur_x, cur_y, c);
 }
 
 def get_events(argc: int) -> Array<string> {
@@ -746,6 +791,8 @@ export def reenter(event_count: int) {
     for (str in events) {
         System.puts("Got event string: ");
         System.puts(str);
+        for (c in str)
+            cmd_append(c);
     }
 }
 `;
