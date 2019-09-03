@@ -738,6 +738,7 @@ var cur_y: int = 0;
 def cmd_buf = Array<byte>.new(cmd_max_len);
 var cmd_insp = 0; // insertion point
 var cmd_len = 0;
+var cmd_row = 0; // first row of cmd
 var prompt = "virgil/bwave: ";
 var vterm: VTerm;
 
@@ -770,6 +771,28 @@ def cmd_append(c: byte) {
     }
 }
 
+def cmd_bkspc() {
+    if (cmd_len == 0)
+        return;
+    cmd_buf[--cmd_len] = ' ';
+    if (cur_x == 0) {
+        cur_x = vterm.cols - 1;
+        cur_y--;
+    } else {
+        cur_x--;
+    }
+    vterm.write(cur_x, cur_y, ' ');
+}
+
+def Strings_equal(arr1: string, arr2: string) -> bool {
+    if (arr1 == arr2) return true;
+    if (arr1.length != arr2.length) return false;
+    for (i < arr1.length) {
+        if (arr1[i] != arr2[i]) return false;
+    }
+    return true;
+}
+
 def get_events(argc: int) -> Array<string> {
     var args = Array<string>.new(argc);
     /*if (argc > 1) {
@@ -791,8 +814,13 @@ export def reenter(event_count: int) {
     for (str in events) {
         System.puts("Got event string: ");
         System.puts(str);
-        for (c in str)
-            cmd_append(c);
+        if (str.length == 1)
+            cmd_append(str[0]);
+        else {
+            if (Strings_equal(str, "Backspace")) {
+                cmd_bkspc();
+            }
+        }
     }
 }
 `;
