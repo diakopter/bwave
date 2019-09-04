@@ -82,15 +82,12 @@ return function BWaveUI(div_id) {
     var canvas_id = div_id + '_canvas';
     var canvas_width = window.innerWidth;
     var canvas_height = window.innerHeight;
-    var glyph_height = 30;
     var mainCanvas = document.createElement("canvas");
-    var glyphCanvas = document.createElement('canvas');
     
     var dpr = 1;//getPixelRatio().devicePixelRatio;
     if (dpr != 1) {
         canvas_height *= dpr;
         canvas_width *= dpr;
-        glyph_height *= dpr;
     }
     function resizeCanvas() {
         mainCanvas.width = window.innerWidth;
@@ -98,12 +95,6 @@ return function BWaveUI(div_id) {
     }
     //window.addEventListener('resize', resizeCanvas, false);
     //resizeCanvas();
-    
-    const glyph_width = glyph_height / 2;
-    const glyph_char_height = glyph_height+'px';
-    const default_foreground = 'gray';
-    const default_background = 'black';
-    const default_font = 'UbuntuMono';
     
     var maindiv = document.getElementById(div_id);
     var mainStyle = document.createElement("style");
@@ -130,12 +121,6 @@ return function BWaveUI(div_id) {
     mainCanvas.width = canvas_width;
     mainCanvas.height = canvas_height;
     maindiv.appendChild(mainCanvas);
-    glyphCanvas.width = glyph_width;
-    glyphCanvas.height = glyph_height;
-    var glyphCanvas_context = glyphCanvas.getContext('2d');
-    glyphCanvas_context.scale(dpr, dpr);
-    var mainCanvas_context = mainCanvas.getContext('2d');
-    mainCanvas_context.scale(dpr, dpr);
     var mainForm = document.createElement("form");
     maindiv.appendChild(mainForm);
     var inputField = document.createElement("textarea");
@@ -154,80 +139,17 @@ return function BWaveUI(div_id) {
     });
     mainForm.appendChild(inputField);
     
-    var firstFontDraw = null;
-    var font_loaded = false;
+    const default_font = 'UbuntuMono';
     var font = new FontFaceObserver(default_font);
+    var os_canvas = mainCanvas.transferControlToOffscreen();
     font.load().then(function () {
-        font_loaded = true;
-        if (firstFontDraw) firstFontDraw();
-        console.log('Loaded font: '+default_font);
+        worker.postMessage([canvas_width, canvas_height, dpr, os_canvas], [os_canvas]);
+        //console.log('Loaded font: '+default_font);
     }, function () {
         console.log('Error loading font: '+default_font);
     });
     
     var worker = new Worker("toplevel.js", {name:"bwave_"+canvas_id});
-    
-    var new_screen = {};
-    var last_screen = new_screen;
-    var received = 0;
-    var drawn = 0;
-    var pen_x = 0;
-    var pen_y = 0;
-    function animate() {
-        if (new_screen !== last_screen) {
-            last_screen = new_screen;
-            drawn++;
-            mainCanvas_context.putImageData(new ImageData(
-                new Uint8ClampedArray(new_screen),
-                    canvas_width, canvas_height), 0, 0);
-        }
-    }
-    
-    function draw_chars(output_str, x_pixels, y_pixels, fontColor, bgColor) {
-        if (!font_loaded) {
-            firstFontDraw = function() {
-                draw_chars(output_str, x_pixels, y_pixels, fontColor, bgColor);
-                firstFontDraw = null;
-            };
-            return;
-        }
-        var chars = Array.from(output_str);
-        // TODO: handle combining characters
-        for (var i = 0; i < chars.length; i++) {
-            render_glyph([chars[i].codePointAt(0)], x_pixels + i*glyph_width, y_pixels, fontColor, bgColor);
-        }
-    }
-    
-    // TODO: use MRU cache if memory explodes
-    var glyph_cache = {};
-    /* array of codepoints. One base glyph plus any combining chars. */
-    function render_glyph(codepoints, x_pixels, y_pixels, fontColor, bgColor) {
-        if (x_pixels > mainCanvas.width - glyph_width
-         || y_pixels > mainCanvas.height - glyph_height) {
-            return;
-            throw `Glyph draw coordinates out of range: {x_pixels}, {y_pixels}`;
-        }
-        
-        const fontSpec = glyph_char_height+' '+default_font;
-        fontColor = fontColor || default_foreground;
-        bgColor = bgColor || default_background;
-        // TODO: add ultra fast cache for codepoint < 256
-        const cacheKey = codepoints.join(',')+','+fontSpec+','+fontColor+','+bgColor;
-        var imageData = glyph_cache[cacheKey];
-        if (!imageData) {
-            var render_glyph = String.fromCodePoint.apply(null, codepoints);
-            glyphCanvas_context.clearRect(0, 0, glyph_width, glyph_height);
-            glyphCanvas_context.fillStyle = bgColor;
-            glyphCanvas_context.fillRect(0, 0, glyph_width, glyph_height);
-            glyphCanvas_context.fillStyle = fontColor;
-            glyphCanvas_context.font = fontSpec;
-            glyphCanvas_context.textBaseline = 'top';
-            glyphCanvas_context.fillText(render_glyph, 0, 0);
-            imageData = glyphCanvas_context.getImageData(0, 0, glyph_width, glyph_height);
-            glyph_cache[cacheKey] = imageData;
-        }
-        mainCanvas_context.putImageData(imageData, x_pixels, y_pixels);
-    }
     
     function setup_inputfield() {
         var presses = [];
@@ -272,31 +194,20 @@ return function BWaveUI(div_id) {
         switch(code) {
         case 0: // toplevel exited
             var exitCode = evt.data[1];
-            console.log(`Received ${ received } frames; drew ${ drawn } frames`);
+            console.log(`Root process terminated with code { exitCode }.`);
             return;
-        case 1: // sending canvas frame
-            received++;
-            new_screen = evt.data[1];
+        case 1:
             return;
         case 2: // register browser input hooks
             setup_inputfield();
             return;
-        case 3: // register browser output hook
-            var fps = evt.data[1] || 60;
-            setInterval(animate, 1000/fps);
+        case 3:
             return;
         case 4: // resize canvas
             throw "not yet implemented: bwaveui_resize";
-        case 5: // mono_glyph
-            draw_chars(String.fromCodePoint(evt.data[3]), evt.data[1], evt.data[2]);
-            return;
         default:
             throw "invalid message code: "+code;
         }
-    };
-    
-    this.run = function() {
-        worker.postMessage([canvas_width, canvas_height, dpr]);
     };
 };
 
