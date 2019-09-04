@@ -227,12 +227,11 @@ function VProcess(_vfs, _vdisplay) {
     function bwave_display_width() {
         return vdisplay.width();
     }
-    const RGBA_bytes = 4;
-    function bwave_display_draw(ptr) {
-        var result = vdisplay.draw(mem_ref(ptr, RGBA_bytes * vdisplay.height() * vdisplay.width()));
+    function bwave_display_clear() {
+        vdisplay.clear();
     }
-    function bwave_mono_glyph(x, y, ascii) {
-        return vdisplay.mono_glyph(x, y, ascii);
+    function bwave_mono_glyph(col, row, ascii) {
+        return vdisplay.mono_glyph(col, row, ascii);
     }
     
     const wasm_imports = {
@@ -254,7 +253,7 @@ function VProcess(_vfs, _vdisplay) {
             throw_ex: bwave_throw_ex,
             display_height: bwave_display_height,
             display_width: bwave_display_width,
-            display_draw: bwave_display_draw,
+            display_clear: bwave_display_clear,
             mono_glyph: bwave_mono_glyph
         }
     };
@@ -354,12 +353,22 @@ global.vprocess_init = function(vfs, vdisplay) {
 
 (function(global) {
 
-function VDisplay(width, height, dpr, os_canvas) {
+function VDisplay(dpr, os_canvas) {
     
-    var need_init = true;
+    var width = os_canvas.width;
+    var height = os_canvas.height;
     var os_context = os_canvas.getContext('2d');
-    os_context.fillStyle = 'black';
-    os_context.fillRect(0, 0, os_context.width, os_context.height);
+    
+    var glyph_height = 30;
+    glyph_height = Math.ceil(glyph_height * dpr);
+    const glyph_width = Math.floor(glyph_height / 2);
+    const glyph_char_height = glyph_height+'px';
+    const default_foreground = 'gray';
+    const default_background = 'black';
+    const default_font = 'UbuntuMono';
+    var glyphCanvas = new OffscreenCanvas(glyph_width, glyph_height);
+    var glyphCanvas_context = glyphCanvas.getContext('2d');
+    //glyphCanvas_context.scale(dpr, dpr);
     
     this.resize = function(height_new, width_new) {
         throw "Not yet implemented: vdisplay.resize"
@@ -373,32 +382,23 @@ function VDisplay(width, height, dpr, os_canvas) {
         return width;
     };
     
-    this.draw = function(buf) {
-        if (need_init) {
-            global.postMessage([3, 60]);
-            need_init = false;
-        }
+    this.drawRaw = function() {
         var clone = buf.slice(0);
     //    context.putImageData(new ImageData(clone, width, height), 0, 0);
         global.postMessage([1, clone]);
     };
     
-    this.mono_glyph = function(x, y, ascii) {
-        render_glyph([ascii], x, y);
-        //global.postMessage([5, x, y, ascii]);
+    this.clear = function() {
+        os_context.fillStyle = 'black';
+        os_context.fillRect(0, 0, width, height);
+        os_context.closePath();
+        os_context.fill();
+        os_context.beginPath();
     };
     
-    var glyph_height = 30;
-    glyph_height *= dpr;
-    
-    const glyph_width = glyph_height / 2;
-    const glyph_char_height = glyph_height+'px';
-    const default_foreground = 'gray';
-    const default_background = 'black';
-    const default_font = 'UbuntuMono';
-    var glyphCanvas = new OffscreenCanvas(glyph_width, glyph_height);
-    var glyphCanvas_context = glyphCanvas.getContext('2d');
-    glyphCanvas_context.scale(dpr, dpr);
+    this.mono_glyph = function(col, row, ascii) {
+        render_glyph([ascii], col*glyph_width, row*glyph_height);
+    };
     
     function draw_chars(output_str, x_pixels, y_pixels, fontColor, bgColor) {
         var chars = Array.from(output_str);
@@ -432,10 +432,35 @@ function VDisplay(width, height, dpr, os_canvas) {
         }
         os_context.putImageData(imageData, x_pixels, y_pixels);
     }
+    
+    function display_init() {
+        if (!global.fonts_loaded()) {
+            setTimeout(display_init, 10);
+            return;
+        }
+        
+        // setup refresh
+        const rAF = global.requestAnimationFrame;
+        (function repaint() { rAF(repaint); })();
+    }
 }
 
-global.vdisplay_bind = function(width, height, dpr, os_canvas) {
-    return new VDisplay(width, height, dpr, os_canvas);
+global.fonts_loaded = function() {
+    return global.fonts.status === "loaded" ? true : false
+};
+var mono_reg = new FontFace('UbuntuMono', 'url(fonts/UbuntuMono-Regular.ttf)');
+mono_reg.load();
+var mono_bold = new FontFace('UbuntuMono', 'url(fonts/UbuntuMono-Bold.ttf)',
+    { weight: 'bold' });
+mono_bold.load();
+global.fonts.add(mono_reg);
+global.fonts.add(mono_bold);
+global.fonts.onloadingerror = function(err) {
+    console.log(err);
+};
+
+global.vdisplay_bind = function(dpr, os_canvas) {
+    return new VDisplay(dpr, os_canvas);
 };
 
 })(self);
@@ -686,18 +711,17 @@ import component bwave {
 
 	def throw_ex(ex: Pointer, ex_len: int, msg: Pointer, msg_len: int);
     
-    // get device pixels
     def display_height() -> int;
     def display_width() -> int;
+    def display_clear();
     
-    def display_draw(buf: Pointer);
-    
-    def mono_glyph(buf: Pointer, off: int, len: int, ascii: int);
+    def mono_glyph(col: int, row: int, ascii: int);
 }
 `;
 
 })(self);
 
+(function(global) {
 const terminal = {};
 // = terminal_init("\x1b[0mvirgil\x1b[1m#\x1b[0m ");
 /*
@@ -729,7 +753,11 @@ onmessage = function handle_first_message(evt) {
     vfs._vfs()["CommandShell.v3"] = ascii2ab(CommandShellv3);
     
     onmessage = vprocess_toplevel.get_message_handler();
-    setTimeout(function() {
+    setTimeout(function engine_init() {
+        if (!global.fonts_loaded()) {
+            setTimeout(engine_init, 10);
+            return;
+        }
         vprocess_toplevel.invoke("Aeneas -compile -target=wasm -heap-size=50m CommandShell.v3 System.v3 RiRuntime.v3 bwave.v3 VTerm.v3");
         vprocess_toplevel.invoke("CommandShell", function() {
             console.log("root process completed startup.");
@@ -738,50 +766,26 @@ onmessage = function handle_first_message(evt) {
 }
 
 const vtermv3 = `
-class VTerm(width: int, height: int) {
+class VTerm {
     private def char_width = 15;
     private def char_height = 30;
-    private var backing = Array<byte>.new(4 * height * width);
+    var cols: int;
+    var rows: int;
     
-    var cols = width / char_width;
-    var rows = height / char_height;
-    var fgcolor = "gray";
-    var bgcolor = "black";
+    new(width: int, height: int) {
+        cols = width / char_width;
+        rows = height / char_height;
+        bwave.display_clear();
+    }
     
     def write(col: int, row: int, ascii: byte) {
-        bwave.mono_glyph(Pointer.atContents(backing),
-            4 * (width * char_height*row + char_width*col),
-            char_width * char_height, ascii);
-    }
-    
-    def draw() {
-        bwave.display_draw(Pointer.atContents(backing));
-    }
-    def fill(r: byte, g: byte, b: byte, a: byte) {
-        for (i < height) {
-            for (j < width) {
-                backing[4*(i*width+j)+0] = r;
-                backing[4*(i*width+j)+1] = g;
-                backing[4*(i*width+j)+2] = b;
-                backing[4*(i*width+j)+3] = a;
-            }
-        }
+        bwave.mono_glyph(col, row, ascii);
     }
 }
 
 `;
 const CommandShellv3 =
 `
-/*
-	System.puts("Hello world!\\n");
-    var step = 50;
-    for (i=0;i < 256;i=i+step)
-    for (j=0;j < 256;j=j+step)
-    for (k=0;k < 256;k=k+step) {
-    vterm.fill(byte.!(i), byte.!(j), byte.!(k), byte.!(255));
-    vterm.draw();
-    }
-*/
 def cmd_max_len = 1000;
 var cur_x: int = 0;
 var cur_y: int = 0;
@@ -795,11 +799,8 @@ var vterm: VTerm;
 def main(args: Array<string>) -> int {
     vterm = VTerm.new(bwave.display_width(), bwave.display_height());
     var i = 0;
-    for (c in prompt) {
-        vterm.write(i++, 0, c);
-    }
+    for (c in prompt) vterm.write(i++, 0, c);
     cur_x += prompt.length;
-    vterm.draw();
     
     return 0;
 }
@@ -842,10 +843,6 @@ def Strings_equal(arr1: string, arr2: string) -> bool {
 
 def get_events(argc: int) -> Array<string> {
     var args = Array<string>.new(argc);
-    /*if (argc > 1) {
-        System.puts("got more than 1 arg: ");
-        System.puti(argc);
-    }*/
     for (i < argc) {
         var len = bwave.event_len(i);
         var str = Array<byte>.new(len);
@@ -871,10 +868,10 @@ export def reenter(event_count: int) {
             }
         }
     }
-    vterm.draw();
 }
 `;
 
 //run_cmd("Aeneas -compile -target=wasm foo.v3 System.v3 RiRuntime.v3 bwave.v3",
 //function() { runtime_exec(null, null, null, function() { run_cmd("foo"); }) });
 
+})(self);
